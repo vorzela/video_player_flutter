@@ -6,9 +6,11 @@ Federated Flutter **HLS** player built for low memory and fast start.
 |----------|--------|--------|
 | Android | AndroidX **Media3 ExoPlayer** + HLS | Tight `DefaultLoadControl` (2–10s buffers) |
 | iOS | **AVPlayer** + `AVPlayerItemVideoOutput` | Peak bitrate caps; Flutter **Texture** (not PlatformView) |
+| Web / desktop | — | **Not shipped** — use the platform’s usual players on web |
 
 - Position / buffer events throttled to **250ms**
 - `fastStart`: start low, then let ABR climb
+- `VorzelaHoverPreview` for muted hover/long-press thumbnails (Android/iOS)
 - Pairs with Go [`video`](https://github.com/vorzela/video) + [`hlsstore`](https://github.com/vorzela/hlsstore) (`master.m3u8`)
 
 **License:** MIT  
@@ -163,6 +165,29 @@ Regenerate Pigeon with `tool/generate_pigeon.sh` (keep Dart + Kotlin + Swift on 
 | `VorzelaPlayerView({required controller, fit})` | Texture view sized to **real** video aspect (not fixed 16:9); poster until ready |
 | `controller` | `VorzelaPlayerController` |
 | `fit` | `BoxFit` (default `contain`) |
+
+### `VorzelaHoverPreview`
+
+Muted Netflix-style thumbnail preview on **hover** (mouse/trackpad) or **long-press** (touch). Android/iOS only — on web use another player.
+
+```dart
+VorzelaHoverPreview(
+  uri: 'https://cdn.example.com/videos/123/preview.m3u8', // short clip
+  poster: 'https://cdn.example.com/videos/123/poster.jpg',
+  previewDuration: const Duration(seconds: 5),
+)
+```
+
+| Member | Description |
+|--------|-------------|
+| `uri` / `poster` | Preview HLS + poster image |
+| `previewDuration` | Play this long then loop or pause |
+| `startDelay` | Debounce before starting (default 350ms) |
+| `loop` | Loop while hovered (default true) |
+| `exclusive` | Stop other previews when this starts (default true) |
+| `fit` | `BoxFit` for poster and texture |
+
+Prefer a short dedicated preview asset. For TikTok-style feeds, use scroll visibility + preload instead of hover.
 
 ### `QualityLevel` (platform interface)
 
