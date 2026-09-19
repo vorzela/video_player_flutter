@@ -10,6 +10,8 @@ Federated Flutter **HLS** player built for low memory and fast start.
 
 - Position / buffer events throttled to **250ms**
 - `fastStart`: start low, then let ABR climb
+- `VorzelaPlayer` — tap play/pause, fullscreen + auto-rotate, mute chrome
+- Pauses in background by default; **opt-in** Android PiP to play over other apps
 - `VorzelaHoverPreview` — one shared low-res player, mute/unmute, Android/iOS
 - Pairs with Go [`video`](https://github.com/vorzela/video) + [`hlsstore`](https://github.com/vorzela/hlsstore) (`master.m3u8`)
 
@@ -102,6 +104,40 @@ class _PlayerPageState extends State<PlayerPage> {
 ```
 
 Always call `controller.dispose()` (or `disposePlayer()`) when leaving the screen — same pattern as disposing a `TextEditingController`.
+
+### Full player chrome
+
+```dart
+final controller = VorzelaPlayerController(
+  pauseOnBackground: true,       // default — stop when app backgrounds
+  allowsPictureInPicture: false, // opt-in Android PiP over other apps
+);
+
+// Tap = play/pause (YouTube). Fullscreen button unlocks auto-rotate.
+VorzelaPlayer(
+  controller: controller,
+  tapAction: VorzelaTapAction.playPause,
+  autoRotateInFullscreen: true,
+);
+
+// Or open fullscreen yourself:
+await VorzelaFullscreen.open(context, controller: controller);
+```
+
+| Tap action | Behavior |
+|------------|----------|
+| `playPause` (default) | Toggle play / pause |
+| `toggleMute` | Mute / unmute |
+| `fullscreen` | Enter fullscreen |
+| `none` | Host handles gestures |
+
+**PiP (opt-in):** set `allowsPictureInPicture: true`. On Android, backgrounding may enter Activity PiP instead of pausing. Declare on your app `Activity`:
+
+```xml
+android:supportsPictureInPicture="true"
+```
+
+iOS texture PiP is not implemented (returns unsupported). No floating “draw over other apps” overlay permission is required unless you add that yourself.
 
 ---
 

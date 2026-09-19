@@ -1,6 +1,6 @@
 name: video_player_flutter_android
 description: Android Media3 ExoPlayer implementation for video_player_flutter.
-version: 0.0.2
+version: 0.0.3
 publish_to: none
 
 environment:

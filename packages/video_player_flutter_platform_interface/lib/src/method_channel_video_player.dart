@@ -102,6 +102,20 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
       _channel.invokeMethod<void>('dispose', {'playerId': playerId});
 
   @override
+  Future<bool> enterPictureInPicture(int playerId) async {
+    final ok = await _channel.invokeMethod<bool>('enterPictureInPicture', {
+      'playerId': playerId,
+    });
+    return ok ?? false;
+  }
+
+  @override
+  Future<bool> isPictureInPictureSupported() async {
+    final ok = await _channel.invokeMethod<bool>('isPictureInPictureSupported');
+    return ok ?? false;
+  }
+
+  @override
   Stream<PlayerEvent> eventsFor(int playerId) {
     return _rawEventStream(_events).where((e) {
       final id = e['playerId'];

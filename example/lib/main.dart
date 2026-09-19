@@ -11,7 +11,11 @@ class ExampleApp extends StatefulWidget {
 }
 
 class _ExampleAppState extends State<ExampleApp> {
-  final controller = VorzelaPlayerController();
+  // pauseOnBackground: true (default). allowsPictureInPicture: false (opt-in).
+  final controller = VorzelaPlayerController(
+    pauseOnBackground: true,
+    allowsPictureInPicture: false,
+  );
   final urlController = TextEditingController(
     text: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
   );
@@ -29,7 +33,6 @@ class _ExampleAppState extends State<ExampleApp> {
       fastStart: true,
       autoPlay: true,
     );
-    setState(() {});
   }
 
   @override
@@ -43,9 +46,11 @@ class _ExampleAppState extends State<ExampleApp> {
             return Column(
               children: [
                 AspectRatio(
-                  aspectRatio: controller.videoAspectRatio ??
-                      (MediaQuery.sizeOf(context).aspectRatio),
-                  child: VorzelaPlayerView(controller: controller),
+                  aspectRatio: controller.videoAspectRatio ?? 16 / 9,
+                  child: VorzelaPlayer(
+                    controller: controller,
+                    tapAction: VorzelaTapAction.playPause,
+                  ),
                 ),
                 Padding(
                   padding: const EdgeInsets.all(12),
@@ -61,13 +66,12 @@ class _ExampleAppState extends State<ExampleApp> {
                   spacing: 8,
                   children: [
                     FilledButton(onPressed: _load, child: const Text('Load')),
-                    FilledButton(
-                      onPressed: controller.isPlaying ? controller.pause : controller.play,
-                      child: Text(controller.isPlaying ? 'Pause' : 'Play'),
-                    ),
                     if (controller.isBuffering) const Text('Buffering…'),
                     if (controller.error != null)
-                      Text(controller.error!, style: const TextStyle(color: Colors.red)),
+                      Text(
+                        controller.error!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
                   ],
                 ),
               ],

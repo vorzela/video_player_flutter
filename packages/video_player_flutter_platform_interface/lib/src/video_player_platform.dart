@@ -69,6 +69,12 @@ abstract class VideoPlayerPlatform extends PlatformInterface {
     throw UnimplementedError('disposePlayer() has not been implemented.');
   }
 
+  /// Opt-in: enter Android Activity PiP (keeps playback when leaving the app).
+  /// Default unsupported → returns `false`. Not required for normal playback.
+  Future<bool> enterPictureInPicture(int playerId) async => false;
+
+  Future<bool> isPictureInPictureSupported() async => false;
+
   Stream<PlayerEvent> eventsFor(int playerId) {
     throw UnimplementedError('eventsFor() has not been implemented.');
   }

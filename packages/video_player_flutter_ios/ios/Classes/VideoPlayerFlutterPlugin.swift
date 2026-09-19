@@ -105,6 +105,12 @@ public class VideoPlayerFlutterPlugin: NSObject, FlutterPlugin, FlutterStreamHan
       let id = args?["playerId"] as? Int ?? -1
       players.removeValue(forKey: id)?.release()
       result(nil)
+    case "isPictureInPictureSupported":
+      // Texture-backed AVPlayer has no system PiP without AVPlayerLayer —
+      // opt-in Android PiP covers "play over other apps"; iOS returns false.
+      result(false)
+    case "enterPictureInPicture":
+      result(false)
     default:
       result(FlutterMethodNotImplemented)
     }

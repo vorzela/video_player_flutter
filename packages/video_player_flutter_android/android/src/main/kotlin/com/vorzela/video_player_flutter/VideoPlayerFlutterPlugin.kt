@@ -1,8 +1,13 @@
 package com.vorzela.video_player_flutter
 
+import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Rational
 import android.view.Surface
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -14,6 +19,8 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -22,12 +29,17 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 @UnstableApi
-class VideoPlayerFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
+class VideoPlayerFlutterPlugin :
+  FlutterPlugin,
+  MethodChannel.MethodCallHandler,
+  EventChannel.StreamHandler,
+  ActivityAware {
   private lateinit var channel: MethodChannel
   private lateinit var eventChannel: EventChannel
   private lateinit var context: Context
   private lateinit var textures: TextureRegistry
 
+  private var activity: Activity? = null
   private var eventSink: EventChannel.EventSink? = null
   private val players = ConcurrentHashMap<Int, PlayerSession>()
   private val nextId = AtomicInteger(1)
@@ -47,6 +59,22 @@ class VideoPlayerFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
     eventChannel.setStreamHandler(null)
     players.values.forEach { it.release() }
     players.clear()
+  }
+
+  override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+    activity = binding.activity
+  }
+
+  override fun onDetachedFromActivityForConfigChanges() {
+    activity = null
+  }
+
+  override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+    activity = binding.activity
+  }
+
+  override fun onDetachedFromActivity() {
+    activity = null
   }
 
   override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
@@ -73,7 +101,6 @@ class VideoPlayerFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         val uri = call.argument<String>("uri") ?: return result.error("bad_args", "uri", null)
         val session = players[id] ?: return result.error("missing", "player", null)
         val scheme = android.net.Uri.parse(uri).scheme?.lowercase()
-        // HTTPS only: blocks file:// / content:// and cleartext http://.
         if (scheme != "https") {
           return result.error(
             "insecure_uri",
@@ -121,6 +148,40 @@ class VideoPlayerFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         val id = call.argId()
         players.remove(id)?.release()
         result.success(null)
+      }
+      "isPictureInPictureSupported" -> {
+        val act = activity
+        val ok = act != null &&
+          Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+          act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        result.success(ok)
+      }
+      "enterPictureInPicture" -> {
+        // Opt-in only: puts the Flutter Activity in system PiP so playback can
+        // continue over other apps. Apps that never call this never leave
+        // fullscreen / never need overlay permissions.
+        val act = activity
+        val id = call.argId()
+        val session = players[id]
+        if (act == null || session == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+          result.success(false)
+          return
+        }
+        if (!act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+          result.success(false)
+          return
+        }
+        val size = session.videoSize()
+        val aspect = if (size.first > 0 && size.second > 0) {
+          Rational(size.first, size.second)
+        } else {
+          Rational(16, 9)
+        }
+        val params = PictureInPictureParams.Builder()
+          .setAspectRatio(aspect)
+          .build()
+        val entered = act.enterPictureInPictureMode(params)
+        result.success(entered)
       }
       else -> result.notImplemented()
     }
@@ -322,6 +383,11 @@ private class PlayerSession(
 
   override fun onPlayerError(error: PlaybackException) {
     emit(mapOf("type" to "error", "playerId" to id, "message" to (error.message ?: "playback error")))
+  }
+
+  fun videoSize(): Pair<Int, Int> {
+    val s = player.videoSize
+    return Pair(s.width, s.height)
   }
 
   fun release() {
