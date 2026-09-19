@@ -73,7 +73,8 @@ class _PlayerPageState extends State<PlayerPage> {
       builder: (context, _) => Column(
         children: [
           AspectRatio(
-            aspectRatio: 16 / 9,
+            // Uses decoded size once ready; falls back until then.
+            aspectRatio: controller.videoAspectRatio ?? 1,
             child: VorzelaPlayerView(controller: controller),
           ),
           if (controller.isBuffering) const LinearProgressIndicator(),
