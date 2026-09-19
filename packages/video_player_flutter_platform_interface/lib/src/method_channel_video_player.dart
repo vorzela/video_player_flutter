@@ -14,6 +14,18 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
   final MethodChannel _channel;
   final EventChannel _events;
 
+  /// Flutter's [EventChannel] allows only **one** active native sink. Opening
+  /// `receiveBroadcastStream` per player stomps previous listeners — fatal for
+  /// feeds with multiple preloaded players. Share one native subscription and
+  /// fan-out by `playerId` instead.
+  static Stream<Map<Object?, Object?>>? _sharedRaw;
+  static Stream<Map<Object?, Object?>> _rawEventStream(EventChannel events) {
+    return _sharedRaw ??= events.receiveBroadcastStream().map((raw) {
+      if (raw is Map) return Map<Object?, Object?>.from(raw);
+      return <Object?, Object?>{};
+    });
+  }
+
   static void registerWith() {
     VideoPlayerPlatform.instance = MethodChannelVideoPlayer();
   }
@@ -91,9 +103,10 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Stream<PlayerEvent> eventsFor(int playerId) {
-    return _events.receiveBroadcastStream({'playerId': playerId}).where((e) {
-      return e is Map && e['playerId'] == playerId;
-    }).map((raw) => _decodeEvent(Map<Object?, Object?>.from(raw as Map)));
+    return _rawEventStream(_events).where((e) {
+      final id = e['playerId'];
+      return id == playerId || (id is num && id.toInt() == playerId);
+    }).map(_decodeEvent);
   }
 
   PlayerEvent _decodeEvent(Map<Object?, Object?> map) {
@@ -107,6 +120,8 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
           textureId: (map['textureId'] as num?)?.toInt() ?? 0,
           durationMs: (map['durationMs'] as num?)?.toInt() ?? 0,
           levels: levels,
+          videoWidth: (map['videoWidth'] as num?)?.toInt() ?? 0,
+          videoHeight: (map['videoHeight'] as num?)?.toInt() ?? 0,
         );
       case 'buffering':
         return PlayerBufferingEvent(map['isBuffering'] == true);

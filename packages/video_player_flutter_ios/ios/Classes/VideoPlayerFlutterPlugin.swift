@@ -5,6 +5,8 @@ import UIKit
 public class VideoPlayerFlutterPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   private var channel: FlutterMethodChannel?
   private var eventChannel: FlutterEventChannel?
+  /// Single sink: Flutter EventChannel allows only one active listener.
+  /// Dart shares one `receiveBroadcastStream` and filters by `playerId`.
   private var eventSink: FlutterEventSink?
   private var registrar: FlutterPluginRegistrar?
   private var players: [Int: PlayerSession] = [:]
@@ -63,6 +65,13 @@ public class VideoPlayerFlutterPlugin: NSObject, FlutterPlugin, FlutterStreamHan
         result(FlutterError(code: "bad_args", message: nil, details: nil))
         return
       }
+      // HTTPS only — blocks file:// and cleartext http://.
+      guard let scheme = URL(string: uri)?.scheme?.lowercased(), scheme == "https" else {
+        result(
+          FlutterError(
+            code: "insecure_uri", message: "Only https:// URIs are allowed", details: nil))
+        return
+      }
       session.load(
         uri: uri,
         autoPlay: args?["autoPlay"] as? Bool ?? false,
@@ -114,7 +123,21 @@ private final class PlayerSession: NSObject {
   private var displayLink: CADisplayLink?
   private var lastPositionEmit: CFTimeInterval = 0
   private var fastStart = true
-  private var pixelBuffer: CVPixelBuffer?
+  // Written on CADisplayLink (main), read on Flutter raster thread.
+  private let pixelBufferLock = NSLock()
+  private var _pixelBuffer: CVPixelBuffer?
+  private var pixelBuffer: CVPixelBuffer? {
+    get {
+      pixelBufferLock.lock()
+      defer { pixelBufferLock.unlock() }
+      return _pixelBuffer
+    }
+    set {
+      pixelBufferLock.lock()
+      _pixelBuffer = newValue
+      pixelBufferLock.unlock()
+    }
+  }
 
   init(id: Int, registrar: FlutterPluginRegistrar, emit: @escaping ([String: Any]) -> Void) {
     self.id = id
@@ -137,8 +160,11 @@ private final class PlayerSession: NSObject {
     }
     let item = AVPlayerItem(url: url)
     if capToPlayerSize, let h = viewHeight, h > 0 {
-      // Cap peak bitrate roughly by height band for memory.
       item.preferredPeakBitRate = Double(max(h, 240) * 4_000)
+    }
+    // No-op for VOD; for live HLS keeps playback ~3s behind the live edge.
+    if #available(iOS 14.0, *) {
+      item.configuredTimeOffsetFromLive = CMTime(seconds: 3, preferredTimescale: 1)
     }
     let attrs: [String: Any] = [
       kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -159,6 +185,7 @@ private final class PlayerSession: NSObject {
     )
 
     item.addObserver(self, forKeyPath: "status", options: [.new], context: nil)
+    item.addObserver(self, forKeyPath: "presentationSize", options: [.new], context: nil)
 
     displayLink = CADisplayLink(target: self, selector: #selector(onTick))
     displayLink?.preferredFramesPerSecond = 30
@@ -171,7 +198,14 @@ private final class PlayerSession: NSObject {
     forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey: Any]?,
     context: UnsafeMutableRawPointer?
   ) {
-    guard keyPath == "status", let item = item else { return }
+    guard let item = item else { return }
+    if keyPath == "presentationSize" {
+      if item.presentationSize.width > 0 && item.presentationSize.height > 0 {
+        emitReady(item: item)
+      }
+      return
+    }
+    guard keyPath == "status" else { return }
     switch item.status {
     case .readyToPlay:
       if fastStart {
@@ -180,14 +214,7 @@ private final class PlayerSession: NSObject {
           item.preferredPeakBitRate = 0
         }
       }
-      let durationMs = Int((item.duration.seconds.isFinite ? item.duration.seconds : 0) * 1000)
-      emit([
-        "type": "ready",
-        "playerId": id,
-        "textureId": textureId,
-        "durationMs": durationMs,
-        "levels": levels(),
-      ])
+      emitReady(item: item)
     case .failed:
       emit([
         "type": "error", "playerId": id, "message": item.error?.localizedDescription ?? "failed",
@@ -195,6 +222,20 @@ private final class PlayerSession: NSObject {
     default:
       break
     }
+  }
+
+  private func emitReady(item: AVPlayerItem) {
+    let durationMs = Int((item.duration.seconds.isFinite ? item.duration.seconds : 0) * 1000)
+    let size = item.presentationSize
+    emit([
+      "type": "ready",
+      "playerId": id,
+      "textureId": textureId,
+      "durationMs": durationMs,
+      "levels": levels(),
+      "videoWidth": Int(size.width),
+      "videoHeight": Int(size.height),
+    ])
   }
 
   @objc private func onTick() {
@@ -250,6 +291,7 @@ private final class PlayerSession: NSObject {
     displayLink = nil
     if let item = item {
       item.removeObserver(self, forKeyPath: "status")
+      item.removeObserver(self, forKeyPath: "presentationSize")
       NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: item)
     }
     player?.pause()

@@ -9,11 +9,19 @@ class PlayerReadyEvent extends PlayerEvent {
     required this.textureId,
     required this.durationMs,
     required this.levels,
+    this.videoWidth = 0,
+    this.videoHeight = 0,
   });
 
   final int textureId;
   final int durationMs;
   final List<QualityLevel> levels;
+
+  /// Natural decoded frame size (`0` if not yet known). Used to size the
+  /// texture at the video's real aspect ratio (portrait short-form included)
+  /// instead of assuming 16:9.
+  final int videoWidth;
+  final int videoHeight;
 }
 
 class PlayerBufferingEvent extends PlayerEvent {

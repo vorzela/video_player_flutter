@@ -1,6 +1,6 @@
 name: video_player_flutter
 description: Low-memory HLS video player for Flutter (Media3 ExoPlayer / AVPlayer).
-version: 0.0.1
+version: 0.0.2
 publish_to: none
 homepage: https://github.com/vorzela/video_player_flutter
 

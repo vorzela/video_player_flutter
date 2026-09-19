@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_flutter/video_player_flutter.dart';
 import 'package:video_player_flutter_platform_interface/video_player_flutter_platform_interface.dart';
@@ -10,6 +11,7 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   int nextId = 1;
   String? lastUri;
   String? lastQuality;
+  Object? loadError;
 
   @override
   Future<int> create() async => nextId++;
@@ -25,10 +27,13 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
     int? viewWidth,
     int? viewHeight,
   }) async {
+    if (loadError != null) throw loadError!;
     lastUri = uri;
     events.add(PlayerReadyEvent(
       textureId: 42,
       durationMs: 10000,
+      videoWidth: 1080,
+      videoHeight: 1920,
       levels: const [
         QualityLevel(index: 0, height: 240, bitrate: 400000, label: '240p'),
         QualityLevel(index: 1, height: 720, bitrate: 2000000, label: '720p'),
@@ -80,6 +85,9 @@ void main() {
     expect(c.textureId, 42);
     expect(c.levels.length, 2);
     expect(c.isPlaying, isTrue);
+    expect(c.videoWidth, 1080);
+    expect(c.videoHeight, 1920);
+    expect(c.videoAspectRatio, closeTo(1080 / 1920, 0.0001));
 
     await c.setQuality('480p');
     expect(fake.lastQuality, '480p');
@@ -109,6 +117,20 @@ void main() {
     expect(c.error, 'boom');
     expect(c.isPlaying, isFalse);
 
+    await c.disposePlayer();
+    c.dispose();
+  });
+
+  test('load failure surfaces on error field', () async {
+    final fake = FakeVideoPlayerPlatform();
+    fake.loadError = PlatformException(
+      code: 'insecure_uri',
+      message: 'Only https:// URIs are allowed',
+    );
+    final c = VorzelaPlayerController(platform: fake);
+    await c.load('http://example.com/a.m3u8');
+    expect(c.error, contains('insecure_uri'));
+    expect(c.isReady, isFalse);
     await c.disposePlayer();
     c.dispose();
   });

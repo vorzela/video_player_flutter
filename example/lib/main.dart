@@ -43,7 +43,8 @@ class _ExampleAppState extends State<ExampleApp> {
             return Column(
               children: [
                 AspectRatio(
-                  aspectRatio: 16 / 9,
+                  aspectRatio: controller.videoAspectRatio ??
+                      (MediaQuery.sizeOf(context).aspectRatio),
                   child: VorzelaPlayerView(controller: controller),
                 ),
                 Padding(

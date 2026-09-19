@@ -1,6 +1,6 @@
 name: video_player_flutter_platform_interface
 description: Platform interface for video_player_flutter (HLS via Media3 / AVPlayer).
-version: 0.0.1
+version: 0.0.2
 publish_to: none
 
 environment:

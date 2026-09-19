@@ -72,6 +72,15 @@ class VideoPlayerFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         val id = call.argument<Int>("playerId") ?: return result.error("bad_args", "playerId", null)
         val uri = call.argument<String>("uri") ?: return result.error("bad_args", "uri", null)
         val session = players[id] ?: return result.error("missing", "player", null)
+        val scheme = android.net.Uri.parse(uri).scheme?.lowercase()
+        // HTTPS only: blocks file:// / content:// and cleartext http://.
+        if (scheme != "https") {
+          return result.error(
+            "insecure_uri",
+            "Only https:// URIs are allowed, got scheme=$scheme",
+            null,
+          )
+        }
         session.load(
           uri = uri,
           autoPlay = call.argument<Boolean>("autoPlay") ?: false,
@@ -190,7 +199,19 @@ private class PlayerSession(
         .setMaxVideoSize(viewWidth, viewHeight)
         .build()
     }
-    player.setMediaItem(MediaItem.fromUri(uri))
+    // liveConfiguration is a no-op for VOD; for live HLS it tracks ~3s behind
+    // the live edge (VOD-tuned tight buffers alone stall/drift on live).
+    val mediaItem = MediaItem.Builder()
+      .setUri(uri)
+      .setLiveConfiguration(
+        MediaItem.LiveConfiguration.Builder()
+          .setTargetOffsetMs(3_000)
+          .setMinPlaybackSpeed(0.97f)
+          .setMaxPlaybackSpeed(1.03f)
+          .build(),
+      )
+      .build()
+    player.setMediaItem(mediaItem)
     player.prepare()
     player.playWhenReady = autoPlay
   }
@@ -271,18 +292,32 @@ private class PlayerSession(
             handler.postDelayed({ setQuality("auto") }, 1_500)
           }
         }
-        emit(
-          mapOf(
-            "type" to "ready",
-            "playerId" to id,
-            "textureId" to textureEntry.id(),
-            "durationMs" to player.duration.coerceAtLeast(0),
-            "levels" to levels(),
-          ),
-        )
+        emitReady()
       }
       Player.STATE_ENDED -> emit(mapOf("type" to "completed", "playerId" to id))
     }
+  }
+
+  override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+    if (videoSize.width <= 0 || videoSize.height <= 0) return
+    // Dimensions often arrive after STATE_READY — re-emit ready so Dart
+    // can pick up the real aspect ratio without a hardcoded 16:9.
+    emitReady()
+  }
+
+  private fun emitReady() {
+    val size = player.videoSize
+    emit(
+      mapOf(
+        "type" to "ready",
+        "playerId" to id,
+        "textureId" to textureEntry.id(),
+        "durationMs" to player.duration.coerceAtLeast(0),
+        "levels" to levels(),
+        "videoWidth" to size.width,
+        "videoHeight" to size.height,
+      ),
+    )
   }
 
   override fun onPlayerError(error: PlaybackException) {
@@ -293,6 +328,9 @@ private class PlayerSession(
     released = true
     handler.removeCallbacks(tickRunnable)
     player.removeListener(this)
+    // Detach surface before release — avoids IllegalStateException under
+    // rapid create/dispose churn (fast-scrolling feeds).
+    player.clearVideoSurface(surface)
     player.release()
     surface.release()
     textureEntry.release()

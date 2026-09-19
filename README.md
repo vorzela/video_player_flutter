@@ -127,7 +127,7 @@ Regenerate Pigeon with `tool/generate_pigeon.sh` (keep Dart + Kotlin + Swift on 
 | Member | Type | Description |
 |--------|------|-------------|
 | `VorzelaPlayerController({VideoPlayerPlatform? platform})` | constructor | Uses platform instance; inject fake platform in tests |
-| `load(uri, {poster, autoPlay, fastStart, capToPlayerSize, viewWidth, viewHeight})` | `Future<void>` | Create native player, load HLS master URL |
+| `load(uri, {poster, autoPlay, fastStart, capToPlayerSize, viewWidth, viewHeight})` | `Future<void>` | Create native player, load **https** HLS master URL (errors → `error` field) |
 | `play()` | `Future<void>` | Resume playback |
 | `pause()` | `Future<void>` | Pause playback |
 | `seek(Duration to)` | `Future<void>` | Seek |
@@ -135,6 +135,8 @@ Regenerate Pigeon with `tool/generate_pigeon.sh` (keep Dart + Kotlin + Swift on 
 | `setQuality(String quality)` | `Future<void>` | `"auto"` or label like `"480p"` |
 | `disposePlayer()` | `Future<void>` | Tear down native player; safe to call before `load` again |
 | `dispose()` | `void` | `ChangeNotifier.dispose` + `disposePlayer()` |
+| `videoAspectRatio` | `double?` | Real width/height once known (portrait, landscape, square) |
+| `videoWidth` / `videoHeight` | `int` | Decoded frame size |
 
 **Observable fields** (via `Listenable` / `ListenableBuilder`):
 
@@ -149,14 +151,15 @@ Regenerate Pigeon with `tool/generate_pigeon.sh` (keep Dart + Kotlin + Swift on 
 | `buffered` | `Duration` | Buffered ahead |
 | `levels` | `List<QualityLevel>` | ABR rungs from master playlist |
 | `currentQuality` | `String` | Last `setQuality` value (`auto` default) |
-| `error` | `String?` | Fatal playback error message |
+| `error` | `String?` | Fatal / load error message |
 | `poster` | `String?` | Poster URL passed to `load` |
+| `videoAspectRatio` | `double?` | From native `videoWidth`/`videoHeight` |
 
 ### `VorzelaPlayerView`
 
 | Member | Description |
 |--------|-------------|
-| `VorzelaPlayerView({required controller, fit})` | Texture-backed view; shows network poster until `textureId` is set |
+| `VorzelaPlayerView({required controller, fit})` | Texture view sized to **real** video aspect (not fixed 16:9); poster until ready |
 | `controller` | `VorzelaPlayerController` |
 | `fit` | `BoxFit` (default `contain`) |
 
@@ -174,11 +177,15 @@ Regenerate Pigeon with `tool/generate_pigeon.sh` (keep Dart + Kotlin + Swift on 
 
 | Type | Fields | When |
 |------|--------|------|
-| `PlayerReadyEvent` | `textureId`, `durationMs`, `levels` | Ready to display |
+| `PlayerReadyEvent` | `textureId`, `durationMs`, `levels`, `videoWidth`, `videoHeight` | Ready / size update |
 | `PlayerBufferingEvent` | `isBuffering` | Buffer state change |
 | `PlayerPositionEvent` | `positionMs`, `bufferedMs` | Throttled progress |
 | `PlayerErrorEvent` | `message` | Fatal error |
 | `PlayerCompletedEvent` | — | End of stream |
+
+Events from **all** players share one EventChannel; Dart filters by `playerId` so feeds with multiple preloaded players work.
+
+**URI policy:** native `load` accepts **https:// only**.
 
 ### `VideoPlayerPlatform` (for tests / custom hosts)
 

@@ -21,6 +21,17 @@ class VorzelaPlayerController extends ChangeNotifier {
   String currentQuality = 'auto';
   String? error;
   String? poster;
+  int _videoWidth = 0;
+  int _videoHeight = 0;
+
+  /// Real decoded aspect ratio (width / height) once known — portrait
+  /// short-form (`≈0.56`), landscape (`≈1.78`), square (`1`), etc.
+  /// `null` until dimensions arrive with / after `ready`.
+  double? get videoAspectRatio =>
+      (_videoWidth > 0 && _videoHeight > 0) ? _videoWidth / _videoHeight : null;
+
+  int get videoWidth => _videoWidth;
+  int get videoHeight => _videoHeight;
 
   StreamSubscription<PlayerEvent>? _events;
 
@@ -37,32 +48,49 @@ class VorzelaPlayerController extends ChangeNotifier {
     this.poster = poster;
     error = null;
     isReady = false;
+    _videoWidth = 0;
+    _videoHeight = 0;
     notifyListeners();
 
     final id = await _platform.create();
     _playerId = id;
     _events = _platform.eventsFor(id).listen(_onEvent);
 
-    await _platform.load(
-      id,
-      uri: uri,
-      poster: poster,
-      autoPlay: autoPlay,
-      fastStart: fastStart,
-      capToPlayerSize: capToPlayerSize,
-      viewWidth: viewWidth,
-      viewHeight: viewHeight,
-    );
-    if (autoPlay) isPlaying = true;
+    try {
+      await _platform.load(
+        id,
+        uri: uri,
+        poster: poster,
+        autoPlay: autoPlay,
+        fastStart: fastStart,
+        capToPlayerSize: capToPlayerSize,
+        viewWidth: viewWidth,
+        viewHeight: viewHeight,
+      );
+      if (autoPlay) isPlaying = true;
+    } catch (e) {
+      // Surface native/method-channel failures (bad_args, insecure_uri, …)
+      // through the same `error` field UI already listens to.
+      error = '$e';
+      isPlaying = false;
+    }
     notifyListeners();
   }
 
   void _onEvent(PlayerEvent event) {
     switch (event) {
-      case PlayerReadyEvent(:final textureId, :final durationMs, :final levels):
+      case PlayerReadyEvent(
+          :final textureId,
+          :final durationMs,
+          :final levels,
+          :final videoWidth,
+          :final videoHeight,
+        ):
         this.textureId = textureId;
         duration = Duration(milliseconds: durationMs);
         this.levels = levels;
+        if (videoWidth > 0) _videoWidth = videoWidth;
+        if (videoHeight > 0) _videoHeight = videoHeight;
         isReady = true;
         error = null;
       case PlayerBufferingEvent(:final isBuffering):
@@ -126,6 +154,8 @@ class VorzelaPlayerController extends ChangeNotifier {
     isReady = false;
     isBuffering = false;
     isPlaying = false;
+    _videoWidth = 0;
+    _videoHeight = 0;
     if (id != null) {
       await _platform.disposePlayer(id);
     }
