@@ -7,3 +7,4 @@ export 'package:video_player_flutter_platform_interface/video_player_flutter_pla
 export 'src/vorzela_hover_preview.dart';
 export 'src/vorzela_player_controller.dart';
 export 'src/vorzela_player_view.dart';
+export 'src/vorzela_preview_session.dart';

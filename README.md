@@ -10,7 +10,7 @@ Federated Flutter **HLS** player built for low memory and fast start.
 
 - Position / buffer events throttled to **250ms**
 - `fastStart`: start low, then let ABR climb
-- `VorzelaHoverPreview` for muted hover/long-press thumbnails (Android/iOS)
+- `VorzelaHoverPreview` — one shared low-res player, mute/unmute, Android/iOS
 - Pairs with Go [`video`](https://github.com/vorzela/video) + [`hlsstore`](https://github.com/vorzela/hlsstore) (`master.m3u8`)
 
 **License:** MIT  
@@ -168,26 +168,35 @@ Regenerate Pigeon with `tool/generate_pigeon.sh` (keep Dart + Kotlin + Swift on 
 
 ### `VorzelaHoverPreview`
 
-Muted Netflix-style thumbnail preview on **hover** (mouse/trackpad) or **long-press** (touch). Android/iOS only — on web use another player.
+YouTube-style thumbnail preview on **hover** (or **long-press** on touch).  
+**Android/iOS only** — on web use another player.
 
 ```dart
 VorzelaHoverPreview(
-  uri: 'https://cdn.example.com/videos/123/preview.m3u8', // short clip
-  poster: 'https://cdn.example.com/videos/123/poster.jpg',
+  uri: 'https://cdn.example.com/v/123/preview.m3u8', // short clip
+  poster: 'https://cdn.example.com/v/123/poster.jpg',
+  muted: true,          // default — tap to unmute while previewing
+  volume: 1.0,
+  maxDecodeHeight: 360, // keep RAM low
+  lowQuality: true,     // pin lowest HLS rung
   previewDuration: const Duration(seconds: 5),
 )
 ```
 
-| Member | Description |
-|--------|-------------|
-| `uri` / `poster` | Preview HLS + poster image |
-| `previewDuration` | Play this long then loop or pause |
-| `startDelay` | Debounce before starting (default 350ms) |
-| `loop` | Loop while hovered (default true) |
-| `exclusive` | Stop other previews when this starts (default true) |
-| `fit` | `BoxFit` for poster and texture |
+| Member | Default | Description |
+|--------|---------|-------------|
+| `muted` | `true` | Start silent (tap toggles if `tapTogglesMute`) |
+| `volume` | `1.0` | Level when unmuted |
+| `tapTogglesMute` | `true` | Tap preview to mute/unmute |
+| `maxDecodeHeight` | `360` | Cap decode / ABR for previews |
+| `lowQuality` | `true` | Stay on cheapest ladder rung |
+| `startDelay` | `280ms` | Debounce mouse sweeps |
+| `loop` | `true` | Loop first `previewDuration` |
+| `onMuteChanged` | — | `(bool muted)` callback |
 
-Prefer a short dedicated preview asset. For TikTok-style feeds, use scroll visibility + preload instead of hover.
+**Memory:** all tiles share **one** [VorzelaPreviewSession] native player. Exit → pause; idle ~800ms → full dispose. Prefer short preview assets, not the full feature master.
+
+For TikTok-style feeds, drive play/pause from scroll visibility on a single full player — don’t spawn a hover player per row.
 
 ### `QualityLevel` (platform interface)
 

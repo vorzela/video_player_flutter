@@ -5,6 +5,10 @@ import 'package:video_player_flutter/video_player_flutter.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  tearDown(() async {
+    await VorzelaPreviewSession.instance.disposeNow();
+  });
+
   testWidgets('VorzelaHoverPreview shows poster until hover starts',
       (tester) async {
     await tester.pumpWidget(
@@ -16,7 +20,8 @@ void main() {
             child: VorzelaHoverPreview(
               uri: 'https://example.com/preview.m3u8',
               poster: 'https://example.com/poster.jpg',
-              startDelay: Duration(hours: 1), // never auto-start in test
+              startDelay: Duration(hours: 1),
+              muted: true,
             ),
           ),
         ),
@@ -25,5 +30,16 @@ void main() {
 
     expect(find.byType(Image), findsOneWidget);
     expect(find.byType(VorzelaPlayerView), findsNothing);
+    expect(VorzelaPreviewSession.instance.isBusy, isFalse);
+  });
+
+  test('preview session is a singleton', () {
+    expect(
+      identical(
+        VorzelaPreviewSession.instance,
+        VorzelaPreviewSession.instance,
+      ),
+      isTrue,
+    );
   });
 }

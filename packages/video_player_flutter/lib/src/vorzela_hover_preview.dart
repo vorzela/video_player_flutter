@@ -2,175 +2,214 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'vorzela_player_controller.dart';
 import 'vorzela_player_view.dart';
+import 'vorzela_preview_session.dart';
 
-/// Thumbnail that plays a short muted preview on hover (Netflix-style),
-/// and falls back to a poster otherwise.
+/// Low-memory thumbnail preview on hover / long-press (YouTube / Netflix style).
 ///
-/// **Platforms:** this package ships **Android + iOS only** (no web/desktop
-/// native engine). Use another player on web. Hover still works on
-/// iPad/Android tablets with a mouse/trackpad; touch-only devices use
-/// long-press.
-///
-/// Prefer a short, low-bitrate preview HLS clip for [uri] — not the full
-/// master. Each active preview owns a real ExoPlayer/AVPlayer; [exclusive]
-/// (default) ensures only one preview plays at a time in a grid.
+/// - **Android + iOS only** (no web — use another player there).
+/// - Shares **one** native player via [VorzelaPreviewSession] (not one per tile).
+/// - Default **muted** (browser/OS autoplay rules + less surprising UX); set
+///   [muted] false or tap the preview to unmute.
+/// - Caps decode height ([maxDecodeHeight]) and locks to the lowest HLS rung
+///   so a hover never pulls full 1080p into RAM.
+/// - On exit: pause immediately, dispose native player after a short idle.
 class VorzelaHoverPreview extends StatefulWidget {
   const VorzelaHoverPreview({
     super.key,
     required this.uri,
     required this.poster,
     this.previewDuration = const Duration(seconds: 5),
-    this.startDelay = const Duration(milliseconds: 350),
+    this.startDelay = const Duration(milliseconds: 280),
     this.fit = BoxFit.cover,
     this.loop = true,
-    this.exclusive = true,
+    this.muted = true,
+    this.volume = 1.0,
+    this.maxDecodeHeight = 360,
+    this.lowQuality = true,
+    this.tapTogglesMute = true,
+    this.onMuteChanged,
   });
 
-  /// HLS URL to preview (ideally a dedicated short clip).
+  /// Prefer a short, low-bitrate preview HLS — not the full feature master.
   final String uri;
   final String poster;
 
-  /// How much of [uri] to show before looping (or pausing if [loop] is false).
   final Duration previewDuration;
-
-  /// Debounce so a fast mouse sweep across a row does not spin up players.
   final Duration startDelay;
-
   final BoxFit fit;
-
-  /// Loop the first [previewDuration] while hovered/held.
   final bool loop;
 
-  /// If true, starting this preview stops any other exclusive preview.
-  final bool exclusive;
+  /// Start muted (default). YouTube-style; unmute via tap if [tapTogglesMute].
+  final bool muted;
+
+  /// Volume when unmuted (`0.0`–`1.0`).
+  final double volume;
+
+  /// Max video height hint for ABR / peak bitrate (keeps RAM low).
+  final int maxDecodeHeight;
+
+  /// Pin to the lowest available quality ladder rung for the preview.
+  final bool lowQuality;
+
+  /// Tap while previewing toggles mute (YouTube hover card behavior).
+  final bool tapTogglesMute;
+
+  final ValueChanged<bool>? onMuteChanged;
 
   @override
   State<VorzelaHoverPreview> createState() => _VorzelaHoverPreviewState();
 }
 
 class _VorzelaHoverPreviewState extends State<VorzelaHoverPreview> {
-  static _VorzelaHoverPreviewState? _exclusiveOwner;
+  final _session = VorzelaPreviewSession.instance;
 
-  VorzelaPlayerController? _controller;
   Timer? _startTimer;
   Timer? _loopTimer;
   bool _active = false;
-  int _generation = 0;
+  bool _muted = true;
+  int _gen = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _muted = widget.muted;
+  }
+
+  @override
+  void didUpdateWidget(covariant VorzelaHoverPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.muted != widget.muted && !_active) {
+      _muted = widget.muted;
+    }
+  }
+
+  double get _effectiveVolume => _muted ? 0.0 : widget.volume;
 
   void _onEnter() {
     _startTimer?.cancel();
-    _startTimer = Timer(widget.startDelay, () {
-      unawaited(_startPreview());
-    });
+    _startTimer = Timer(widget.startDelay, () => unawaited(_start()));
   }
 
   void _onExit() {
     _startTimer?.cancel();
-    unawaited(_stopPreview());
+    _stop();
   }
 
-  Future<void> _startPreview() async {
+  Future<void> _start() async {
     if (!mounted || _active) return;
-    final gen = ++_generation;
+    final gen = ++_gen;
 
-    if (widget.exclusive) {
-      final prev = _exclusiveOwner;
-      if (prev != null && prev != this) {
-        await prev._stopPreview();
-      }
-      _exclusiveOwner = this;
-    }
+    final c = await _session.acquire(
+      owner: this,
+      uri: widget.uri,
+      volume: _effectiveVolume,
+      maxHeight: widget.maxDecodeHeight,
+      lowQuality: widget.lowQuality,
+    );
 
-    final controller = VorzelaPlayerController();
-    try {
-      await controller.load(widget.uri, autoPlay: true, fastStart: true);
-      await controller.setVolume(0);
-    } catch (_) {
-      await controller.disposePlayer();
-      controller.dispose();
+    if (!mounted || gen != _gen || c == null) {
+      if (_session.owner == this) _session.release(this);
       return;
     }
 
-    if (!mounted || gen != _generation) {
-      await controller.disposePlayer();
-      controller.dispose();
-      return;
-    }
-
-    setState(() {
-      _controller = controller;
-      _active = true;
-    });
-    _scheduleLoopOrStop();
+    setState(() => _active = true);
+    _armLoop();
   }
 
-  void _scheduleLoopOrStop() {
+  void _armLoop() {
     _loopTimer?.cancel();
     _loopTimer = Timer(widget.previewDuration, () async {
-      final controller = _controller;
-      if (controller == null || !_active || !mounted) return;
+      if (!_active || !mounted || _session.owner != this) return;
       if (widget.loop) {
-        await controller.seek(Duration.zero);
-        if (_active && mounted) _scheduleLoopOrStop();
+        await _session.seekZero();
+        if (_active && mounted) _armLoop();
       } else {
-        await controller.pause();
+        await _session.pause();
       }
     });
   }
 
-  Future<void> _stopPreview() async {
-    _generation++;
+  void _stop() {
+    _gen++;
     _startTimer?.cancel();
     _loopTimer?.cancel();
-    if (_exclusiveOwner == this) _exclusiveOwner = null;
-
-    final controller = _controller;
-    _controller = null;
+    final wasActive = _active;
     _active = false;
-    if (mounted) setState(() {});
+    _session.release(this);
+    if (wasActive && mounted) setState(() {});
+  }
 
-    if (controller != null) {
-      await controller.disposePlayer();
-      controller.dispose();
-    }
+  Future<void> _toggleMute() async {
+    if (!_active || !widget.tapTogglesMute) return;
+    setState(() => _muted = !_muted);
+    widget.onMuteChanged?.call(_muted);
+    await _session.setVolume(_effectiveVolume);
   }
 
   @override
   void dispose() {
     _startTimer?.cancel();
     _loopTimer?.cancel();
-    if (_exclusiveOwner == this) _exclusiveOwner = null;
-    final controller = _controller;
-    _controller = null;
-    if (controller != null) {
-      unawaited(() async {
-        await controller.disposePlayer();
-        controller.dispose();
-      }());
-    }
+    _session.release(this);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final playing = _active &&
+        _session.owner == this &&
+        _session.controller != null &&
+        _session.controller!.textureId != null;
+
     return MouseRegion(
       onEnter: (_) => _onEnter(),
       onExit: (_) => _onExit(),
       child: GestureDetector(
-        onLongPressStart: (_) => unawaited(_startPreview()),
-        onLongPressEnd: (_) => unawaited(_stopPreview()),
-        child: _active && _controller != null
-            ? VorzelaPlayerView(controller: _controller!, fit: widget.fit)
-            : Image.network(
+        onLongPressStart: (_) => unawaited(_start()),
+        onLongPressEnd: (_) => _stop(),
+        onTap: playing ? () => unawaited(_toggleMute()) : null,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (playing)
+              VorzelaPlayerView(
+                controller: _session.controller!,
+                fit: widget.fit,
+              )
+            else
+              Image.network(
                 widget.poster,
                 fit: widget.fit,
                 errorBuilder: (context, error, stackTrace) =>
                     const ColoredBox(color: Colors.black),
-                loadingBuilder: (context, child, progress) =>
-                    progress == null ? child : const ColoredBox(color: Colors.black),
+                loadingBuilder: (context, child, progress) => progress == null
+                    ? child
+                    : const ColoredBox(color: Colors.black),
               ),
+            if (playing && widget.tapTogglesMute)
+              Positioned(
+                right: 6,
+                bottom: 6,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        _muted ? Icons.volume_off : Icons.volume_up,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
