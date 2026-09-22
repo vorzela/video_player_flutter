@@ -306,6 +306,28 @@ cd packages/video_player_flutter_platform_interface && flutter test
 cd ../video_player_flutter && flutter test
 ```
 
+Memory **contracts** (fake platform — no device): reload never stacks native
+players; preview session stays at ≤1 active player; idle ~800ms dispose;
+decode capped to preview size / lowest quality.
+
+```bash
+cd packages/video_player_flutter && flutter test test/vorzela_memory_contract_test.dart
+```
+
+---
+
+## Linter (best practices)
+
+Use [`video_player_flutter_lint`](packages/video_player_flutter_lint) with
+`custom_lint` ^0.8.1:
+
+- no `VorzelaPlayerController()` inside `build`
+- dispose the controller in `State.dispose`
+- HTTPS-only HLS `load`
+- no `VorzelaHoverPreview` inside ListView/GridView `itemBuilder`
+
+See [packages/video_player_flutter_lint/README.md](packages/video_player_flutter_lint/README.md).
+
 ---
 
 ## License

@@ -1,0 +1,10 @@
+analyzer:
+  plugins:
+    - custom_lint
+include: package:flutter_lints/flutter.yaml
+custom_lint:
+  rules:
+    - avoid_vorzela_player_controller_in_build
+    - prefer_dispose_vorzela_player_controller
+    - avoid_http_hls_load
+    - avoid_hover_preview_per_list_item

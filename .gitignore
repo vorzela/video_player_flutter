@@ -16,3 +16,4 @@ pubspec.lock
 **/DerivedData/
 *.xcuserdata/
 .DS_Store
+custom_lint.log
