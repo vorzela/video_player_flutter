@@ -40,7 +40,9 @@ class VorzelaPlayerView extends StatelessWidget {
       animation: controller,
       builder: (context, _) {
         final textureId = controller.textureId;
-        if (textureId == null) {
+        // Keep poster until a real (non-blank) frame is on the texture.
+        final showVideo = textureId != null && controller.hasFirstFrame;
+        if (!showVideo) {
           final url = controller.poster;
           if (posterBuilder != null) {
             return posterBuilder!(context, url);

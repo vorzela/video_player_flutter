@@ -45,6 +45,9 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
   bool isBuffering = false;
   bool isPlaying = false;
   bool isMuted = false;
+  /// True after native reports a real (non-blank) frame is on the texture.
+  /// Keep showing the poster until then to avoid black/white flashes.
+  bool hasFirstFrame = false;
   double volume = 1.0;
   bool isFullscreen = false;
   bool isInPictureInPicture = false;
@@ -115,12 +118,26 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
     this.poster = poster;
     error = null;
     isReady = false;
+    hasFirstFrame = false;
     _videoWidth = 0;
     _videoHeight = 0;
     notifyListeners();
 
-    final id = await _platform.create();
+    int id;
+    try {
+      id = await _platform.create();
+    } catch (e) {
+      // create() itself can fail (native/channel error). This used to be
+      // uncaught, propagating as an unhandled Future rejection instead of
+      // surfacing on `error` like every other failure path below.
+      if (generation != _loadGeneration) return;
+      error = '$e';
+      notifyListeners();
+      return;
+    }
     if (generation != _loadGeneration) {
+      // A newer load() started while create() was in flight. This native id
+      // belongs to nobody now — dispose it immediately so it isn't leaked.
       await _platform.disposePlayer(id);
       return;
     }
@@ -163,6 +180,11 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
         _playerId != listenPlayerId) {
       return;
     }
+    // Only notify when something observable actually changed. Position
+    // events arrive up to 4x/sec per active player; broadcasting a
+    // notifyListeners() for a value that didn't move forces every listening
+    // widget to rebuild for nothing.
+    var changed = false;
     switch (event) {
       case PlayerReadyEvent(
           :final textureId,
@@ -171,26 +193,60 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
           :final videoWidth,
           :final videoHeight,
         ):
+        final newDuration = Duration(milliseconds: durationMs);
+        if (this.textureId != textureId ||
+            duration != newDuration ||
+            !isReady ||
+            error != null ||
+            (videoWidth > 0 && _videoWidth != videoWidth) ||
+            (videoHeight > 0 && _videoHeight != videoHeight) ||
+            !_listEquals(this.levels, levels)) {
+          changed = true;
+        }
         this.textureId = textureId;
-        duration = Duration(milliseconds: durationMs);
+        duration = newDuration;
         this.levels = levels;
         if (videoWidth > 0) _videoWidth = videoWidth;
         if (videoHeight > 0) _videoHeight = videoHeight;
         isReady = true;
         error = null;
       case PlayerBufferingEvent(:final isBuffering):
-        this.isBuffering = isBuffering;
+        if (this.isBuffering != isBuffering) {
+          this.isBuffering = isBuffering;
+          changed = true;
+        }
       case PlayerPositionEvent(:final positionMs, :final bufferedMs):
-        position = Duration(milliseconds: positionMs);
-        buffered = Duration(milliseconds: bufferedMs);
+        final newPosition = Duration(milliseconds: positionMs);
+        final newBuffered = Duration(milliseconds: bufferedMs);
+        if (newPosition != position || newBuffered != buffered) {
+          position = newPosition;
+          buffered = newBuffered;
+          changed = true;
+        }
       case PlayerErrorEvent(:final message):
+        if (error != message || isPlaying) changed = true;
         error = message;
         isPlaying = false;
       case PlayerCompletedEvent():
+        if (isPlaying || position != duration) changed = true;
         isPlaying = false;
         position = duration;
+      case PlayerFirstFrameEvent():
+        if (!hasFirstFrame) {
+          hasFirstFrame = true;
+          changed = true;
+        }
     }
-    notifyListeners();
+    if (changed) notifyListeners();
+  }
+
+  static bool _listEquals(List<QualityLevel> a, List<QualityLevel> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   Future<void> play() async {
@@ -281,6 +337,7 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
     _playerId = null;
     textureId = null;
     isReady = false;
+    hasFirstFrame = false;
     isBuffering = false;
     isPlaying = false;
     isInPictureInPicture = false;

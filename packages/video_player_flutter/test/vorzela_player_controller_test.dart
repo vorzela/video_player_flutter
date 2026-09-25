@@ -12,10 +12,13 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   String? lastUri;
   String? lastQuality;
   Object? loadError;
+  Object? createError;
 
   @override
-  Future<int> create() async => nextId++;
-
+  Future<int> create() async {
+    if (createError != null) throw createError!;
+    return nextId++;
+  }
   @override
   Future<void> load(
     int playerId, {
@@ -131,6 +134,55 @@ void main() {
     await c.load('http://example.com/a.m3u8');
     expect(c.error, contains('insecure_uri'));
     expect(c.isReady, isFalse);
+    await c.disposePlayer();
+    c.dispose();
+  });
+
+  test('create failure surfaces on error instead of unhandled rejection', () async {
+    final fake = FakeVideoPlayerPlatform()..createError = Exception('native create failed');
+    final c = VorzelaPlayerController(platform: fake);
+    await c.load('https://example.com/a.m3u8');
+    expect(c.error, contains('native create failed'));
+    expect(c.isReady, isFalse);
+    expect(c.playerId, isNull);
+    c.dispose();
+  });
+
+  test('duplicate position events do not notify listeners', () async {
+    final fake = FakeVideoPlayerPlatform();
+    final c = VorzelaPlayerController(platform: fake);
+    await c.load('https://example.com/a.m3u8');
+    await Future<void>.delayed(Duration.zero);
+
+    fake.events.add(const PlayerPositionEvent(positionMs: 1000, bufferedMs: 2000));
+    await Future<void>.delayed(Duration.zero);
+
+    var notifies = 0;
+    c.addListener(() => notifies++);
+    fake.events.add(const PlayerPositionEvent(positionMs: 1000, bufferedMs: 2000));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifies, 0);
+
+    fake.events.add(const PlayerPositionEvent(positionMs: 1001, bufferedMs: 2000));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifies, 1);
+
+    await c.disposePlayer();
+    c.dispose();
+  });
+
+  test('poster stays until firstFrame; firstFrame sets hasFirstFrame', () async {
+    final fake = FakeVideoPlayerPlatform();
+    final c = VorzelaPlayerController(platform: fake);
+    await c.load('https://example.com/a.m3u8', poster: 'https://example.com/p.jpg');
+    await Future<void>.delayed(Duration.zero);
+    expect(c.isReady, isTrue);
+    expect(c.hasFirstFrame, isFalse);
+
+    fake.events.add(const PlayerFirstFrameEvent());
+    await Future<void>.delayed(Duration.zero);
+    expect(c.hasFirstFrame, isTrue);
+
     await c.disposePlayer();
     c.dispose();
   });

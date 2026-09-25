@@ -129,6 +129,8 @@ private final class PlayerSession: NSObject {
   private var displayLink: CADisplayLink?
   private var lastPositionEmit: CFTimeInterval = 0
   private var fastStart = true
+  private var hasGoodFrame = false
+  private var didEmitFirstFrame = false
   // Written on CADisplayLink (main), read on Flutter raster thread.
   private let pixelBufferLock = NSLock()
   private var _pixelBuffer: CVPixelBuffer?
@@ -160,6 +162,9 @@ private final class PlayerSession: NSObject {
     viewHeight: Int?
   ) {
     self.fastStart = fastStart
+    self.hasGoodFrame = false
+    self.didEmitFirstFrame = false
+    self.pixelBuffer = nil
     guard let url = URL(string: uri) else {
       emit(["type": "error", "playerId": id, "message": "bad uri"])
       return
@@ -196,6 +201,9 @@ private final class PlayerSession: NSObject {
     displayLink = CADisplayLink(target: self, selector: #selector(onTick))
     displayLink?.preferredFramesPerSecond = 30
     displayLink?.add(to: .main, forMode: .common)
+    // Start paused unless autoplaying: otherwise the link ticks at 30Hz
+    // (copying pixel buffers + position IPC) while nothing is playing.
+    displayLink?.isPaused = !autoPlay
 
     if autoPlay { player.play() }
   }
@@ -242,37 +250,115 @@ private final class PlayerSession: NSObject {
       "videoWidth": Int(size.width),
       "videoHeight": Int(size.height),
     ])
+    // Push one frame while paused so posters/previews can swap to video
+    // without leaving the display link running at 30Hz. Blank frames are
+    // rejected so Dart keeps the poster until a real frame arrives.
+    _ = pushFrameIfAvailable(rejectBlank: true)
+    emitPosition()
   }
 
   @objc private func onTick() {
-    guard let videoOutput = videoOutput, let player = player else { return }
-    let t = videoOutput.itemTime(forHostTime: CACurrentMediaTime())
-    if videoOutput.hasNewPixelBuffer(forItemTime: t) {
-      pixelBuffer = videoOutput.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil)
-      texture.textureFrameAvailable(textureId)
-    }
+    _ = pushFrameIfAvailable(rejectBlank: !hasGoodFrame)
     let now = CACurrentMediaTime()
     if now - lastPositionEmit >= 0.25 {
       lastPositionEmit = now
-      let pos = Int((player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0) * 1000)
-      emit([
-        "type": "position",
-        "playerId": id,
-        "positionMs": pos,
-        "bufferedMs": pos,
-      ])
+      emitPosition()
     }
   }
 
+  @discardableResult
+  private func pushFrameIfAvailable(rejectBlank: Bool) -> Bool {
+    guard let videoOutput = videoOutput else { return false }
+    let t = videoOutput.itemTime(forHostTime: CACurrentMediaTime())
+    guard videoOutput.hasNewPixelBuffer(forItemTime: t),
+      let buffer = videoOutput.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil)
+    else { return false }
+    if rejectBlank && isNearBlackOrWhite(buffer) {
+      return false
+    }
+    pixelBuffer = buffer
+    hasGoodFrame = true
+    texture.textureFrameAvailable(textureId)
+    if !didEmitFirstFrame {
+      didEmitFirstFrame = true
+      emit(["type": "firstFrame", "playerId": id])
+    }
+    return true
+  }
+
+  /// Samples a coarse grid; near-solid black/white clears are common before
+  /// the decoder produces a real frame and look like a flash over the poster.
+  private func isNearBlackOrWhite(_ buffer: CVPixelBuffer) -> Bool {
+    CVPixelBufferLockBaseAddress(buffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+    guard let base = CVPixelBufferGetBaseAddress(buffer) else { return true }
+    let width = CVPixelBufferGetWidth(buffer)
+    let height = CVPixelBufferGetHeight(buffer)
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+    guard width > 1, height > 1 else { return true }
+
+    let steps = 8
+    var sum = 0.0
+    var minL = 1.0
+    var maxL = 0.0
+    var count = 0
+    for gy in 0..<steps {
+      for gx in 0..<steps {
+        let x = gx * (width - 1) / (steps - 1)
+        let y = gy * (height - 1) / (steps - 1)
+        let row = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+        let b = Double(row[x * 4])
+        let g = Double(row[x * 4 + 1])
+        let r = Double(row[x * 4 + 2])
+        let l = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+        sum += l
+        minL = min(minL, l)
+        maxL = max(maxL, l)
+        count += 1
+      }
+    }
+    let avg = sum / Double(count)
+    let contrast = maxL - minL
+    if avg < 0.04 && contrast < 0.08 { return true }
+    if avg > 0.96 && contrast < 0.08 { return true }
+    return false
+  }
+
+  private func emitPosition() {
+    guard let player = player else { return }
+    let pos = Int((player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0) * 1000)
+    emit([
+      "type": "position",
+      "playerId": id,
+      "positionMs": pos,
+      "bufferedMs": pos,
+    ])
+  }
+
   @objc private func onEnd() {
+    // AVPlayer stops advancing at end-of-item; stop the display link too.
+    displayLink?.isPaused = true
     emit(["type": "completed", "playerId": id])
   }
 
-  func play() { player?.play() }
-  func pause() { player?.pause() }
+  func play() {
+    player?.play()
+    displayLink?.isPaused = false
+  }
+
+  func pause() {
+    player?.pause()
+    displayLink?.isPaused = true
+  }
+
   func seek(ms: Int) {
     let t = CMTime(value: CMTimeValue(ms), timescale: 1000)
-    player?.seek(to: t)
+    player?.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+      guard finished, let self = self else { return }
+      // Reject blank seek frames so we keep the last good frame / poster.
+      _ = self.pushFrameIfAvailable(rejectBlank: true)
+      self.emitPosition()
+    }
   }
   func setVolume(_ v: Float) { player?.volume = max(0, min(1, v)) }
   func setQuality(_ quality: String) {

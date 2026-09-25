@@ -148,6 +148,8 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
         return PlayerErrorEvent('${map['message'] ?? 'unknown'}');
       case 'completed':
         return const PlayerCompletedEvent();
+      case 'firstFrame':
+        return const PlayerFirstFrameEvent();
       default:
         return PlayerErrorEvent('Unknown event $type');
     }

@@ -218,32 +218,60 @@ private class PlayerSession(
   private var lastPositionEmit = 0L
   private var fastStart = true
   private var released = false
+  // Only true while the tick loop is scheduled. Without this the loop kept
+  // re-posting every 250ms for the lifetime of the player — including while
+  // paused — burning CPU/battery and spamming the method channel.
+  private var ticking = false
   private val tickRunnable = object : Runnable {
     override fun run() {
-      if (released) return
-      if (player.playbackState != Player.STATE_IDLE && player.playbackState != Player.STATE_ENDED) {
-        val now = System.currentTimeMillis()
-        if (now - lastPositionEmit >= 250) {
-          lastPositionEmit = now
-          val buffered = player.bufferedPosition.coerceAtLeast(0)
-          emit(
-            mapOf(
-              "type" to "position",
-              "playerId" to id,
-              "positionMs" to player.currentPosition,
-              "bufferedMs" to buffered,
-            ),
-          )
-        }
+      if (released || !ticking) return
+      val now = System.currentTimeMillis()
+      if (now - lastPositionEmit >= 250) {
+        lastPositionEmit = now
+        val buffered = player.bufferedPosition.coerceAtLeast(0)
+        emit(
+          mapOf(
+            "type" to "position",
+            "playerId" to id,
+            "positionMs" to player.currentPosition,
+            "bufferedMs" to buffered,
+          ),
+        )
       }
       handler.postDelayed(this, 250)
     }
   }
 
+  private fun startTicking() {
+    if (released || ticking) return
+    ticking = true
+    lastPositionEmit = 0L
+    handler.post(tickRunnable)
+  }
+
+  private fun stopTicking() {
+    ticking = false
+    handler.removeCallbacks(tickRunnable)
+  }
+
+  /** Tick while frames/position advance, or while we intend to play but are buffering. */
+  private fun syncTicking() {
+    if (released) return
+    val wantTick =
+      player.isPlaying ||
+        (player.playWhenReady &&
+          player.playbackState != Player.STATE_IDLE &&
+          player.playbackState != Player.STATE_ENDED)
+    if (wantTick) startTicking() else stopTicking()
+  }
+
   init {
     player.setVideoSurface(surface)
     player.addListener(this)
-    handler.post(tickRunnable)
+  }
+
+  override fun onIsPlayingChanged(isPlaying: Boolean) {
+    syncTicking()
   }
 
   fun load(
@@ -275,19 +303,34 @@ private class PlayerSession(
     player.setMediaItem(mediaItem)
     player.prepare()
     player.playWhenReady = autoPlay
+    syncTicking()
   }
 
   fun play() {
     player.playWhenReady = true
     player.play()
+    syncTicking()
   }
 
   fun pause() {
     player.pause()
+    stopTicking()
   }
 
   fun seek(ms: Long) {
     player.seekTo(ms)
+    // Emit once so Dart progress updates while paused (tick loop is stopped).
+    if (!ticking && !released) {
+      val buffered = player.bufferedPosition.coerceAtLeast(ms)
+      emit(
+        mapOf(
+          "type" to "position",
+          "playerId" to id,
+          "positionMs" to ms,
+          "bufferedMs" to buffered,
+        ),
+      )
+    }
   }
 
   fun setVolume(v: Float) {
@@ -341,7 +384,10 @@ private class PlayerSession(
 
   override fun onPlaybackStateChanged(playbackState: Int) {
     when (playbackState) {
-      Player.STATE_BUFFERING -> emit(mapOf("type" to "buffering", "playerId" to id, "isBuffering" to true))
+      Player.STATE_BUFFERING -> {
+        emit(mapOf("type" to "buffering", "playerId" to id, "isBuffering" to true))
+        syncTicking()
+      }
       Player.STATE_READY -> {
         emit(mapOf("type" to "buffering", "playerId" to id, "isBuffering" to false))
         if (fastStart) {
@@ -354,8 +400,13 @@ private class PlayerSession(
           }
         }
         emitReady()
+        syncTicking()
       }
-      Player.STATE_ENDED -> emit(mapOf("type" to "completed", "playerId" to id))
+      Player.STATE_ENDED -> {
+        stopTicking()
+        emit(mapOf("type" to "completed", "playerId" to id))
+      }
+      Player.STATE_IDLE -> stopTicking()
     }
   }
 
@@ -385,6 +436,11 @@ private class PlayerSession(
     emit(mapOf("type" to "error", "playerId" to id, "message" to (error.message ?: "playback error")))
   }
 
+  override fun onRenderedFirstFrame() {
+    // ExoPlayer's first rendered frame — not the black clear-color Surface.
+    emit(mapOf("type" to "firstFrame", "playerId" to id))
+  }
+
   fun videoSize(): Pair<Int, Int> {
     val s = player.videoSize
     return Pair(s.width, s.height)
@@ -392,7 +448,7 @@ private class PlayerSession(
 
   fun release() {
     released = true
-    handler.removeCallbacks(tickRunnable)
+    stopTicking()
     player.removeListener(this)
     // Detach surface before release — avoids IllegalStateException under
     // rapid create/dispose churn (fast-scrolling feeds).

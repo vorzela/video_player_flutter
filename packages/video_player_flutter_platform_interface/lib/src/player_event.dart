@@ -47,3 +47,9 @@ class PlayerErrorEvent extends PlayerEvent {
 class PlayerCompletedEvent extends PlayerEvent {
   const PlayerCompletedEvent();
 }
+
+/// Fired when the first non-blank decoded frame is on the texture.
+/// UI should keep showing the poster until this arrives.
+class PlayerFirstFrameEvent extends PlayerEvent {
+  const PlayerFirstFrameEvent();
+}

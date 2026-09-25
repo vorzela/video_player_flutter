@@ -266,6 +266,8 @@ class _VorzelaHoverPreviewState extends State<VorzelaHoverPreview> {
           VorzelaPlayerView(
             controller: _session.controller!,
             fit: widget.fit,
+            // Keep real poster until first non-blank frame (not a black flash).
+            posterBuilder: (context, _) => _buildPoster(context),
           )
         else
           _buildPoster(context),
