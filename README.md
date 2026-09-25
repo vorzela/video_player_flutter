@@ -277,6 +277,45 @@ Regenerate Pigeon with `tool/generate_pigeon.sh` (keep Dart + Kotlin + Swift on 
 | `poster` | `String?` | Poster URL passed to `load` |
 | `videoAspectRatio` | `double?` | From native `videoWidth`/`videoHeight` |
 
+### `VorzelaPlayer`
+
+| Member | When |
+|--------|------|
+| `VorzelaPlayer({controller, fit, tapAction, showControls, …})` | Zero-config chrome |
+| `controlsBuilder` / `overlayBuilder` / `bufferingBuilder` / `posterBuilder` | Fully custom UI; package still owns Texture |
+| `style` (`VorzelaPlayerStyle`) | Tint icons / gradient without a full rebuild |
+| `chromeHideAfter` / `onTap` / `semanticLabel` | Auto-hide + a11y |
+
+### Chrome building blocks
+
+| Widget | When |
+|--------|------|
+| `VorzelaSeekBar` | Drag/tap seek + buffered trail |
+| `VorzelaProgressBar` | Non-interactive progress |
+| `VorzelaTimeLabel` | `mm:ss` / remaining |
+| `VorzelaPlayPauseButton` / `VorzelaMuteButton` | Semantics-wrapped buttons |
+| `vorzelaFormatTime(Duration)` | Format helper |
+
+Compose:
+
+```dart
+controlsBuilder: (ctx, c, visible) => Row(children: [
+  VorzelaPlayPauseButton(controller: c),
+  Expanded(child: VorzelaSeekBar(controller: c)),
+  VorzelaTimeLabel(controller: c),
+]);
+```
+
+### `VorzelaPlaylistController`
+
+| Member | When |
+|--------|------|
+| `VorzelaPlaylistController` / `.wrap(player)` | One native player + Dart queue |
+| `VorzelaMediaItem({uri, title?, poster?})` | Queue entry |
+| `setQueue` / `playAt` / `next` / `previous` | Navigation (races with completed are mutexed) |
+| `repeatMode` / `shuffle` | Loop / shuffle |
+| `VorzelaPlaylistView` | List UI with `itemBuilder` |
+
 ### `VorzelaPlayerView`
 
 | Member | Description |

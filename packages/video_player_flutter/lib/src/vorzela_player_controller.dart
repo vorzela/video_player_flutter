@@ -39,6 +39,7 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
   final bool allowsPictureInPicture;
 
   int? _playerId;
+  int _loadGeneration = 0;
   int? textureId;
   bool isReady = false;
   bool isBuffering = false;
@@ -110,6 +111,7 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
     int? viewHeight,
   }) async {
     await disposePlayer();
+    final generation = _loadGeneration;
     this.poster = poster;
     error = null;
     isReady = false;
@@ -118,8 +120,15 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
     notifyListeners();
 
     final id = await _platform.create();
+    if (generation != _loadGeneration) {
+      await _platform.disposePlayer(id);
+      return;
+    }
     _playerId = id;
-    _events = _platform.eventsFor(id).listen(_onEvent);
+    final listenPlayerId = id;
+    _events = _platform.eventsFor(id).listen(
+          (event) => _onEvent(event, generation, listenPlayerId),
+        );
 
     try {
       await _platform.load(
@@ -132,6 +141,7 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
         viewWidth: viewWidth,
         viewHeight: viewHeight,
       );
+      if (generation != _loadGeneration) return;
       if (autoPlay) isPlaying = true;
       if (isMuted) {
         await _platform.setVolume(id, 0);
@@ -139,13 +149,20 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
         await _platform.setVolume(id, volume);
       }
     } catch (e) {
+      if (generation != _loadGeneration) return;
       error = '$e';
       isPlaying = false;
+      await disposePlayer();
     }
-    notifyListeners();
+    if (generation == _loadGeneration) notifyListeners();
   }
 
-  void _onEvent(PlayerEvent event) {
+  void _onEvent(PlayerEvent event, int generation, int listenPlayerId) {
+    if (generation != _loadGeneration ||
+        _playerId == null ||
+        _playerId != listenPlayerId) {
+      return;
+    }
     switch (event) {
       case PlayerReadyEvent(
           :final textureId,
@@ -257,6 +274,7 @@ class VorzelaPlayerController extends ChangeNotifier with WidgetsBindingObserver
   }
 
   Future<void> disposePlayer() async {
+    _loadGeneration++;
     await _events?.cancel();
     _events = null;
     final id = _playerId;

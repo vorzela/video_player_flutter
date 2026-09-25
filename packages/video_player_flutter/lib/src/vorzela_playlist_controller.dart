@@ -149,6 +149,7 @@ class VorzelaPlaylistController extends ChangeNotifier {
   bool _shuffle = false;
   bool _completedHandled = true;
   bool _advancing = false;
+  bool _navigating = false;
   late final VoidCallback _playerListener;
 
   void _onPlatformEvent(PlayerEvent event) {
@@ -222,33 +223,47 @@ class VorzelaPlaylistController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> next() async {
-    if (_queue.isEmpty) return;
-    if (_orderIndex < _order.length - 1) {
-      _orderIndex++;
-      await playAt(_order[_orderIndex]);
-      return;
-    }
-    if (_repeatMode == VorzelaRepeatMode.all) {
-      _orderIndex = 0;
-      await playAt(_order[_orderIndex]);
+  Future<void> next({bool fromAutoAdvance = false}) async {
+    if (_navigating) return;
+    if (!fromAutoAdvance && _advancing) return;
+    _navigating = true;
+    try {
+      if (_queue.isEmpty) return;
+      if (_orderIndex < _order.length - 1) {
+        _orderIndex++;
+        await playAt(_order[_orderIndex]);
+        return;
+      }
+      if (_repeatMode == VorzelaRepeatMode.all) {
+        _orderIndex = 0;
+        await playAt(_order[_orderIndex]);
+      }
+    } finally {
+      _navigating = false;
     }
   }
 
-  Future<void> previous() async {
-    if (_queue.isEmpty) return;
-    if (player.position > const Duration(seconds: 3)) {
-      await player.seek(Duration.zero);
-      return;
-    }
-    if (_orderIndex > 0) {
-      _orderIndex--;
-      await playAt(_order[_orderIndex]);
-      return;
-    }
-    if (_repeatMode == VorzelaRepeatMode.all) {
-      _orderIndex = _order.length - 1;
-      await playAt(_order[_orderIndex]);
+  Future<void> previous({bool fromAutoAdvance = false}) async {
+    if (_navigating) return;
+    if (!fromAutoAdvance && _advancing) return;
+    _navigating = true;
+    try {
+      if (_queue.isEmpty) return;
+      if (player.position > const Duration(seconds: 3)) {
+        await player.seek(Duration.zero);
+        return;
+      }
+      if (_orderIndex > 0) {
+        _orderIndex--;
+        await playAt(_order[_orderIndex]);
+        return;
+      }
+      if (_repeatMode == VorzelaRepeatMode.all) {
+        _orderIndex = _order.length - 1;
+        await playAt(_order[_orderIndex]);
+      }
+    } finally {
+      _navigating = false;
     }
   }
 
@@ -277,7 +292,7 @@ class VorzelaPlaylistController extends ChangeNotifier {
   }
 
   Future<void> _handleTrackCompleted() async {
-    if (_advancing) return;
+    if (_advancing || _navigating) return;
     _advancing = true;
     try {
       switch (_repeatMode) {
@@ -287,11 +302,11 @@ class VorzelaPlaylistController extends ChangeNotifier {
           await player.play();
         case VorzelaRepeatMode.all:
           _completedHandled = false;
-          await next();
+          await next(fromAutoAdvance: true);
         case VorzelaRepeatMode.off:
           if (_orderIndex < _order.length - 1) {
             _completedHandled = false;
-            await next();
+            await next(fromAutoAdvance: true);
           }
       }
     } finally {
