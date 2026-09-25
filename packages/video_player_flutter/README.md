@@ -1,15 +1,11 @@
 # video_player_flutter
 
-A new Flutter plugin project.
+Low-memory HLS player for Flutter — see the [repo README](../../README.md) for install, API, and examples.
 
-## Getting Started
+## Chrome kit (0.0.8+)
 
-This project is a starting point for a Flutter
-[plug-in package](https://flutter.dev/to/develop-plugins),
-a specialized package that includes platform-specific implementation code for
-Android and/or iOS.
+Compose custom controls with `VorzelaSeekBar`, `VorzelaProgressBar`, `VorzelaTimeLabel`, `VorzelaPlayPauseButton`, and `VorzelaMuteButton` via `VorzelaPlayer.controlsBuilder` or a `Stack` around `VorzelaPlayerView`.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Playlist (0.0.8+)
 
+`VorzelaPlaylistController` queues `VorzelaMediaItem`s on one `VorzelaPlayerController`, auto-advances on completion, and supports repeat / shuffle. Example app: **Queue** icon on the home screen.

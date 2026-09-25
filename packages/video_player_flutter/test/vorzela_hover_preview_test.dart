@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_flutter/video_player_flutter.dart';
+import 'package:vorzela_image/vorzela_image.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -28,7 +29,7 @@ void main() {
       ),
     );
 
-    expect(find.byType(Image), findsOneWidget);
+    expect(find.byType(VorzelaImage), findsOneWidget);
     expect(find.byType(VorzelaPlayerView), findsNothing);
     expect(VorzelaPreviewSession.instance.isBusy, isFalse);
   });

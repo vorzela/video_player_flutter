@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:vorzela_image/vorzela_image.dart';
 
 import 'vorzela_player_controller.dart';
+import 'vorzela_player_style.dart';
 
 /// Texture-backed player view (not a PlatformView — lower memory).
 ///
@@ -12,10 +14,25 @@ class VorzelaPlayerView extends StatelessWidget {
     super.key,
     required this.controller,
     this.fit = BoxFit.contain,
+    this.posterBuilder,
   });
 
   final VorzelaPlayerController controller;
   final BoxFit fit;
+  final VorzelaPosterBuilder? posterBuilder;
+
+  Widget _defaultPoster(BuildContext context, String? url) {
+    if (url == null) return const ColoredBox(color: Colors.black);
+    return VorzelaImage.network(
+      url,
+      fit: fit,
+      semanticLabel: 'Video poster',
+      errorBuilder: (context, error, stackTrace) =>
+          const ColoredBox(color: Colors.black),
+      loadingBuilder: (context, child, progress) =>
+          progress == null ? child : const ColoredBox(color: Colors.black),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -24,66 +41,63 @@ class VorzelaPlayerView extends StatelessWidget {
       builder: (context, _) {
         final textureId = controller.textureId;
         if (textureId == null) {
-          if (controller.poster != null) {
-            return Image.network(
-              controller.poster!,
-              fit: fit,
-              errorBuilder: (context, error, stackTrace) =>
-                  const ColoredBox(color: Colors.black),
-              loadingBuilder: (context, child, progress) =>
-                  progress == null ? child : const ColoredBox(color: Colors.black),
-            );
+          final url = controller.poster;
+          if (posterBuilder != null) {
+            return posterBuilder!(context, url);
           }
-          return const ColoredBox(color: Colors.black);
+          return _defaultPoster(context, url);
         }
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final ar = controller.videoAspectRatio;
-            final maxW = constraints.maxWidth;
-            final maxH = constraints.maxHeight;
-            final hasW = constraints.hasBoundedWidth && maxW.isFinite && maxW > 0;
-            final hasH = constraints.hasBoundedHeight && maxH.isFinite && maxH > 0;
+        return Semantics(
+          excludeSemantics: true,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final ar = controller.videoAspectRatio;
+              final maxW = constraints.maxWidth;
+              final maxH = constraints.maxHeight;
+              final hasW =
+                  constraints.hasBoundedWidth && maxW.isFinite && maxW > 0;
+              final hasH =
+                  constraints.hasBoundedHeight && maxH.isFinite && maxH > 0;
 
-            late final double width;
-            late final double height;
-            if (ar != null && ar > 0) {
-              if (hasW && hasH) {
-                // Fit inside parent using real aspect ratio.
-                if (maxW / maxH > ar) {
+              late final double width;
+              late final double height;
+              if (ar != null && ar > 0) {
+                if (hasW && hasH) {
+                  if (maxW / maxH > ar) {
+                    height = maxH;
+                    width = maxH * ar;
+                  } else {
+                    width = maxW;
+                    height = maxW / ar;
+                  }
+                } else if (hasW) {
+                  width = maxW;
+                  height = maxW / ar;
+                } else if (hasH) {
                   height = maxH;
                   width = maxH * ar;
                 } else {
-                  width = maxW;
-                  height = maxW / ar;
+                  width = 16;
+                  height = 16 / ar;
                 }
-              } else if (hasW) {
-                width = maxW;
-                height = maxW / ar;
-              } else if (hasH) {
-                height = maxH;
-                width = maxH * ar;
               } else {
-                width = 16;
-                height = 16 / ar;
+                width = hasW ? maxW : (hasH ? maxH : 16);
+                height = hasH ? maxH : (hasW ? maxW : 16);
               }
-            } else {
-              // Dimensions not known yet — fill parent (or a stub box).
-              width = hasW ? maxW : (hasH ? maxH : 16);
-              height = hasH ? maxH : (hasW ? maxW : 16);
-            }
 
-            return ClipRect(
-              child: FittedBox(
-                fit: fit,
-                child: SizedBox(
-                  width: width,
-                  height: height,
-                  child: Texture(textureId: textureId),
+              return ClipRect(
+                child: FittedBox(
+                  fit: fit,
+                  child: SizedBox(
+                    width: width,
+                    height: height,
+                    child: Texture(textureId: textureId),
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         );
       },
     );

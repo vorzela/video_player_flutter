@@ -11,8 +11,10 @@ Federated Flutter **HLS** player built for low memory and fast start.
 - Position / buffer events throttled to **250ms**
 - `fastStart`: start low, then let ABR climb
 - `VorzelaPlayer` — tap play/pause, fullscreen + auto-rotate, mute chrome
+- **Fully customizable chrome** via `controlsBuilder` / `overlayBuilder` / `posterBuilder`
 - Pauses in background by default; **opt-in** Android PiP to play over other apps
-- `VorzelaHoverPreview` — one shared low-res player, mute/unmute, Android/iOS
+- `VorzelaHoverPreview` — one shared low-res player, mute/unmute, Android/iOS; customizable poster/overlay builders
+- Posters use [`vorzela_image`](https://github.com/vorzela/vorzela_image) (decode caps)
 - Pairs with Go [`video`](https://github.com/vorzela/video) + [`hlsstore`](https://github.com/vorzela/hlsstore) (`master.m3u8`)
 
 **License:** MIT  
@@ -123,6 +125,87 @@ VorzelaPlayer(
 // Or open fullscreen yourself:
 await VorzelaFullscreen.open(context, controller: controller);
 ```
+
+### Customization
+
+Clients own look & feel; the package owns the native player + Texture.
+
+```dart
+VorzelaPlayer(
+  controller: c,
+  controlsBuilder: (context, c, visible) => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      VorzelaProgressBar(controller: c),
+      Row(
+        children: [
+          VorzelaPlayPauseButton(controller: c),
+          VorzelaMuteButton(controller: c),
+          Expanded(child: VorzelaSeekBar(controller: c)),
+          VorzelaTimeLabel(duration: c.position),
+          const Text(' / '),
+          VorzelaTimeLabel(duration: c.duration),
+        ],
+      ),
+    ],
+  ),
+  overlayBuilder: (context, c) => Align(
+    alignment: Alignment.topLeft,
+    child: Text(c.error ?? ''),
+  ),
+  posterBuilder: (context, url) => VorzelaImage.network(url ?? '', maxHeight: 720),
+  bufferingBuilder: (_) => const Center(child: Text('…')),
+  style: const VorzelaPlayerStyle(iconColor: Colors.amber),
+);
+
+// Fully custom chrome — Texture only:
+Stack(children: [
+  VorzelaPlayerView(controller: c),
+  MyChrome(controller: c),
+]);
+
+VorzelaHoverPreview(
+  uri: item.previewHls,
+  poster: item.poster,
+  maxDecodeHeight: 360,
+  posterBuilder: (_, __) => VorzelaImage.network(item.poster, maxHeight: 360),
+  overlayBuilder: (context, state) => Align(
+    alignment: Alignment.bottomLeft,
+    child: Text(item.title),
+  ),
+);
+```
+
+Never create per-tile `VorzelaPlayerController`s for hover grids — use `VorzelaHoverPreview` / `VorzelaPreviewSession`.
+
+### Playlist
+
+One native player, many URLs — `VorzelaPlaylistController` wraps
+`VorzelaPlayerController`, disposes the previous track on each `load`, and
+auto-advances when the current item completes.
+
+```dart
+final playlist = VorzelaPlaylistController()
+  ..repeatMode = VorzelaRepeatMode.all;
+
+await playlist.setQueue([
+  VorzelaMediaItem(uri: 'https://cdn.example.com/a.m3u8', title: 'Intro'),
+  VorzelaMediaItem(uri: 'https://cdn.example.com/b.m3u8', title: 'Main'),
+]);
+
+VorzelaPlayer(controller: playlist.player);
+
+VorzelaPlaylistView(
+  controller: playlist,
+  itemBuilder: (context, item, index, isCurrent) => ListTile(
+    title: Text(item.title ?? item.uri),
+    selected: isCurrent,
+  ),
+);
+```
+
+Call `playlist.dispose()` when done (also disposes the inner player unless you
+used `VorzelaPlaylistController.wrap`).
 
 | Tap action | Behavior |
 |------------|----------|

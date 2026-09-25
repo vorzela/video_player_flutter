@@ -1,24 +1,40 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:vorzela_image/vorzela_image.dart';
 
+import 'vorzela_player_controller.dart';
+import 'vorzela_player_style.dart';
 import 'vorzela_player_view.dart';
 import 'vorzela_preview_session.dart';
+
+/// State passed to [VorzelaHoverPreview.overlayBuilder].
+@immutable
+class VorzelaHoverPreviewState {
+  const VorzelaHoverPreviewState({
+    required this.playing,
+    required this.muted,
+    this.controller,
+  });
+
+  final bool playing;
+  final bool muted;
+  final VorzelaPlayerController? controller;
+}
 
 /// Low-memory thumbnail preview on hover / long-press (YouTube / Netflix style).
 ///
 /// - **Android + iOS only** (no web — use another player there).
 /// - Shares **one** native player via [VorzelaPreviewSession] (not one per tile).
-/// - Default **muted** (browser/OS autoplay rules + less surprising UX); set
-///   [muted] false or tap the preview to unmute.
-/// - Caps decode height ([maxDecodeHeight]) and locks to the lowest HLS rung
-///   so a hover never pulls full 1080p into RAM.
-/// - On exit: pause immediately, dispose native player after a short idle.
+/// - Customize poster/overlay via builders; never create per-tile controllers.
 class VorzelaHoverPreview extends StatefulWidget {
   const VorzelaHoverPreview({
     super.key,
     required this.uri,
-    required this.poster,
+    this.poster,
+    this.posterBuilder,
+    this.overlayBuilder,
+    this.frameBuilder,
     this.previewDuration = const Duration(seconds: 5),
     this.startDelay = const Duration(milliseconds: 280),
     this.fit = BoxFit.cover,
@@ -28,12 +44,31 @@ class VorzelaHoverPreview extends StatefulWidget {
     this.maxDecodeHeight = 360,
     this.lowQuality = true,
     this.tapTogglesMute = true,
+    this.enableDefaultGestures = true,
     this.onMuteChanged,
-  });
+    this.onHoverStart,
+    this.onHoverEnd,
+    this.onTap,
+    this.semanticLabel = 'Video preview',
+  }) : assert(
+          poster != null || posterBuilder != null,
+          'Provide poster URL and/or posterBuilder',
+        );
 
   /// Prefer a short, low-bitrate preview HLS — not the full feature master.
   final String uri;
-  final String poster;
+
+  /// Poster URL when [posterBuilder] is null.
+  final String? poster;
+
+  final VorzelaPosterBuilder? posterBuilder;
+
+  /// Mute badge, title, etc. Return [SizedBox.shrink] to hide default badge.
+  final Widget Function(BuildContext context, VorzelaHoverPreviewState state)?
+      overlayBuilder;
+
+  /// Wrap texture+poster (radius, border, hero).
+  final Widget Function(BuildContext context, Widget child)? frameBuilder;
 
   final Duration previewDuration;
   final Duration startDelay;
@@ -55,7 +90,14 @@ class VorzelaHoverPreview extends StatefulWidget {
   /// Tap while previewing toggles mute (YouTube hover card behavior).
   final bool tapTogglesMute;
 
+  /// When false, host wires hover/tap; package still owns the session.
+  final bool enableDefaultGestures;
+
   final ValueChanged<bool>? onMuteChanged;
+  final VoidCallback? onHoverStart;
+  final VoidCallback? onHoverEnd;
+  final VoidCallback? onTap;
+  final String semanticLabel;
 
   @override
   State<VorzelaHoverPreview> createState() => _VorzelaHoverPreviewState();
@@ -87,11 +129,15 @@ class _VorzelaHoverPreviewState extends State<VorzelaHoverPreview> {
   double get _effectiveVolume => _muted ? 0.0 : widget.volume;
 
   void _onEnter() {
+    widget.onHoverStart?.call();
+    if (!widget.enableDefaultGestures) return;
     _startTimer?.cancel();
     _startTimer = Timer(widget.startDelay, () => unawaited(_start()));
   }
 
   void _onExit() {
+    widget.onHoverEnd?.call();
+    if (!widget.enableDefaultGestures) return;
     _startTimer?.cancel();
     _stop();
   }
@@ -155,6 +201,51 @@ class _VorzelaHoverPreviewState extends State<VorzelaHoverPreview> {
     super.dispose();
   }
 
+  Widget _buildPoster(BuildContext context) {
+    if (widget.posterBuilder != null) {
+      return widget.posterBuilder!(context, widget.poster);
+    }
+    return VorzelaImage.network(
+      widget.poster!,
+      fit: widget.fit,
+      maxHeight: widget.maxDecodeHeight.toDouble(),
+      semanticLabel: 'Preview poster',
+      errorBuilder: (context, error, stackTrace) =>
+          const ColoredBox(color: Colors.black),
+      loadingBuilder: (context, child, progress) => progress == null
+          ? child
+          : const ColoredBox(color: Colors.black),
+    );
+  }
+
+  Widget _defaultOverlay(VorzelaHoverPreviewState state) {
+    if (!state.playing || !widget.tapTogglesMute) {
+      return const SizedBox.shrink();
+    }
+    return Positioned(
+      right: 6,
+      bottom: 6,
+      child: IgnorePointer(
+        child: ExcludeSemantics(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                state.muted ? Icons.volume_off : Icons.volume_up,
+                color: Colors.white,
+                size: 16,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final playing = _active &&
@@ -162,54 +253,59 @@ class _VorzelaHoverPreviewState extends State<VorzelaHoverPreview> {
         _session.controller != null &&
         _session.controller!.textureId != null;
 
+    final state = VorzelaHoverPreviewState(
+      playing: playing,
+      muted: _muted,
+      controller: playing ? _session.controller : null,
+    );
+
+    Widget child = Stack(
+      fit: StackFit.expand,
+      children: [
+        if (playing)
+          VorzelaPlayerView(
+            controller: _session.controller!,
+            fit: widget.fit,
+          )
+        else
+          _buildPoster(context),
+        if (widget.overlayBuilder != null)
+          widget.overlayBuilder!(context, state)
+        else
+          _defaultOverlay(state),
+      ],
+    );
+
+    if (widget.frameBuilder != null) {
+      child = widget.frameBuilder!(context, child);
+    }
+
+    child = Semantics(
+      label: widget.semanticLabel,
+      button: widget.tapTogglesMute,
+      child: child,
+    );
+
+    if (!widget.enableDefaultGestures) {
+      return GestureDetector(
+        onTap: widget.onTap,
+        child: child,
+      );
+    }
+
     return MouseRegion(
       onEnter: (_) => _onEnter(),
       onExit: (_) => _onExit(),
       child: GestureDetector(
         onLongPressStart: (_) => unawaited(_start()),
         onLongPressEnd: (_) => _stop(),
-        onTap: playing ? () => unawaited(_toggleMute()) : null,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (playing)
-              VorzelaPlayerView(
-                controller: _session.controller!,
-                fit: widget.fit,
-              )
-            else
-              Image.network(
-                widget.poster,
-                fit: widget.fit,
-                errorBuilder: (context, error, stackTrace) =>
-                    const ColoredBox(color: Colors.black),
-                loadingBuilder: (context, child, progress) => progress == null
-                    ? child
-                    : const ColoredBox(color: Colors.black),
-              ),
-            if (playing && widget.tapTogglesMute)
-              Positioned(
-                right: 6,
-                bottom: 6,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Icon(
-                        _muted ? Icons.volume_off : Icons.volume_up,
-                        color: Colors.white,
-                        size: 16,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
+        onTap: playing
+            ? () {
+                widget.onTap?.call();
+                unawaited(_toggleMute());
+              }
+            : widget.onTap,
+        child: child,
       ),
     );
   }

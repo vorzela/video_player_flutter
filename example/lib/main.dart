@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:video_player_flutter/video_player_flutter.dart';
+
+import 'playlist_demo.dart';
 
 void main() => runApp(const ExampleApp());
 
@@ -39,7 +43,24 @@ class _ExampleAppState extends State<ExampleApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(title: const Text('Vorzela HLS')),
+        appBar: AppBar(
+          title: const Text('Vorzela HLS'),
+          actions: [
+            IconButton(
+              tooltip: 'Playlist demo',
+              icon: const Icon(Icons.queue_music),
+              onPressed: () {
+                unawaited(
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const PlaylistDemoPage(),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
         body: ListenableBuilder(
           listenable: controller,
           builder: (context, _) {
